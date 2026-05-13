@@ -197,10 +197,344 @@ class DifferenceEngine:
                 np.clip(hsv, 0, 255).astype(np.uint8), cv2.COLOR_HSV2BGR)
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# ImagePanel — a Tkinter canvas that displays one image
+# ──────────────────────────────────────────────────────────────────────────────
+class ImagePanel:
+    """
+    Base class: owns a tk.Canvas, shows a PIL/OpenCV image scaled to
+    DISPLAY_SIZE, and can draw marker circles onto it.
+
+    Polymorphism: draw_marker can be overridden by subclasses.
+    """
+
+    def __init__(self, parent: tk.Widget, label_text: str):
+        self._frame = tk.Frame(parent, bg=BG_PANEL, bd=2, relief="flat")
+
+        # Header label above the canvas
+        header = tk.Label(
+            self._frame, text=label_text,
+            bg=BG_PANEL, fg=TEXT_SUB,
+            font=("Helvetica", 11, "bold"), pady=6
+        )
+        header.pack()
+
+        # The canvas itself
+        self._canvas = tk.Canvas(
+            self._frame,
+            width=DISPLAY_SIZE[0], height=DISPLAY_SIZE[1],
+            bg="#111122", highlightthickness=0, cursor="crosshair"
+        )
+        self._canvas.pack(padx=8, pady=(0, 8))
+
+        # Internal state
+        self._photo_ref  = None  # keep a reference so GC doesn't collect it
+        self._scale_x    = 1.0   # source px / display px  (set when image loaded)
+        self._scale_y    = 1.0
+        self._src_w      = 1
+        self._src_h      = 1
+        self._markers    = []    # list of (cx, cy, r, colour) in display coords
+
+    # ── Layout ────────────────────────────────────────────────────────────────
+
+    def pack(self, **kwargs):
+        self._frame.pack(**kwargs)
+
+    # ── Image management ──────────────────────────────────────────────────────
+
+    def show_image(self, bgr: np.ndarray):
+        """Display a BGR OpenCV image, scaling to fit DISPLAY_SIZE."""
+        self._src_h, self._src_w = bgr.shape[:2]
+        self._scale_x = self._src_w / DISPLAY_SIZE[0]
+        self._scale_y = self._src_h / DISPLAY_SIZE[1]
+
+        rgb   = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        pil   = Image.fromarray(rgb).resize(DISPLAY_SIZE, Image.Resampling.LANCZOS)
+        photo = ImageTk.PhotoImage(pil)
+
+        self._photo_ref = photo
+        self._canvas.delete("all")
+        self._markers.clear()
+        self._canvas.create_image(0, 0, anchor="nw", image=photo)
+
+    def clear(self):
+        self._canvas.delete("all")
+        self._markers.clear()
+        self._photo_ref = None
+
+    # ── Coordinate helpers ─────────────────────────────────────────────────────
+
+    def src_to_display(self, sx: int, sy: int) -> tuple[int, int]:
+        return int(sx / self._scale_x), int(sy / self._scale_y)
+
+    def display_to_src(self, dx: int, dy: int) -> tuple[int, int]:
+        return int(dx * self._scale_x), int(dy * self._scale_y)
+
+    # ── Marker drawing (polymorphic) ──────────────────────────────────────────
+
+    def draw_marker(self, src_x: int, src_y: int, src_r: int, color_hex: str,
+                    tag: str = "marker"):
+        """Draw a circle around (src_x, src_y) using source-image coordinates."""
+        dx, dy = self.src_to_display(src_x, src_y)
+        # Scale radius too (average of both axes)
+        dr = int(src_r / ((self._scale_x + self._scale_y) / 2))
+        self._canvas.create_oval(
+            dx - dr, dy - dr, dx + dr, dy + dr,
+            outline=color_hex, width=3, tags=tag
+        )
+        self._markers.append((dx, dy, dr, color_hex))
+
+    def _region_centre_radius(self, region) -> tuple[int, int, int]:
+        x, y, w, h = region
+        cx, cy = x + w // 2, y + h // 2
+        r      = int(max(w, h) / 2 + 12)
+        return cx, cy, r
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# ModifiedPanel — subclass with click-handling; the interactive right panel
+# ──────────────────────────────────────────────────────────────────────────────
+class ModifiedPanel(ImagePanel):
+    """
+    Inherits ImagePanel; overrides draw_marker to also flash an animation,
+    and adds a click-callback hook for the game to respond to player input.
+    """
+
+    def __init__(self, parent: tk.Widget):
+        super().__init__(parent, "🔍  Modified  —  Click here to find differences")
+        self._on_click_cb = None
+        self._canvas.bind("<Button-1>", self._handle_click)
+        self._active = False  # only respond to clicks when a game is running
+
+    def activate(self, callback):
+        self._active     = True
+        self._on_click_cb = callback
+
+    def deactivate(self):
+        self._active = False
+
+    def _handle_click(self, event: tk.Event):
+        if not self._active or self._on_click_cb is None:
+            return
+        src_x, src_y = self.display_to_src(event.x, event.y)
+        self._on_click_cb(src_x, src_y, event.x, event.y)
+
+    # Polymorphism: override to add a brief ring animation
+    def draw_marker(self, src_x: int, src_y: int, src_r: int, color_hex: str,
+                    tag: str = "marker"):
+        super().draw_marker(src_x, src_y, src_r, color_hex, tag)
+        # Animate an expanding ghost ring
+        dx, dy = self.src_to_display(src_x, src_y)
+        dr = int(src_r / ((self._scale_x + self._scale_y) / 2))
+        self._animate_ring(dx, dy, dr, color_hex, step=0)
+
+    def _animate_ring(self, cx, cy, base_r, color_hex, step):
+        if step > 6:
+            return
+        r       = base_r + step * 5
+        alpha_s = max(0, 1.0 - step / 7)
+        # Approximate alpha by brightening — hex manipulation
+        ring_id = self._canvas.create_oval(
+            cx - r, cy - r, cx + r, cy + r,
+            outline=color_hex, width=max(1, 3 - step), tags="ring"
+        )
+        self._canvas.after(60, lambda: (
+            self._canvas.delete(ring_id),
+            self._animate_ring(cx, cy, base_r, color_hex, step + 1)
+        ))
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# GameApp — the conductor
+# ──────────────────────────────────────────────────────────────────────────────
+class GameApp:
+    """
+    Root application class.  Owns all game state and ties the UI together.
+    No image-processing logic lives here — that's DifferenceEngine's job.
+    """
+
+    def __init__(self):
+        # ── Window setup ──────────────────────────────────────────────────────
+        self._root = tk.Tk()
+        self._root.title("Spot the Difference")
+        self._root.configure(bg=BG_DARK)
+        self._root.resizable(False, False)
+
+        # ── Game state ────────────────────────────────────────────────────────
+        self._engine   : Optional[DifferenceEngine] = None
+        self._mistakes : int = 0
+        self._score    : int = 0   # cumulative found differences across all images
+        self._game_over: bool = False
+
+        # ── Build UI ──────────────────────────────────────────────────────────
+        #self._build_ui()
+
+    # ── UI Construction ───────────────────────────────────────────────────────
+
+    
+
+    # ── Game flow ─────────────────────────────────────────────────────────────
+
+    def _load_image(self):
+        path = filedialog.askopenfilename(
+            title="Choose an image",
+            filetypes=[("Images", "*.jpg *.jpeg *.png *.bmp *.tiff *.webp"),
+                       ("All files", "*.*")]
+        )
+        if not path:
+            return
+
+        bgr = cv2.imread(path)
+        if bgr is None:
+            messagebox.showerror("Error", "Could not read image. Try a different file.")
+            return
+
+        # Resize source to a sane maximum so differences are proportionate
+        MAX_SRC = (960, 720)
+        h, w = bgr.shape[:2]
+        if w > MAX_SRC[0] or h > MAX_SRC[1]:
+            scale = min(MAX_SRC[0] / w, MAX_SRC[1] / h)
+            bgr   = cv2.resize(bgr, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+
+        self._start_round(bgr)
+
+    def _start_round(self, bgr: np.ndarray):
+        # Reset per-round state
+        self._mistakes  = 0
+        self._game_over = False
+        self._engine    = DifferenceEngine(bgr)
+
+        # Display both images
+        self._orig_panel.show_image(self._engine.original)
+        self._mod_panel.show_image(self._engine.modified)
+
+        # Activate click-handling on the modified panel
+        self._mod_panel.activate(self._on_player_click)
+        self._reveal_btn.config(state="normal", bg="#2a4a6a", fg=TEXT_SUB)
+
+        self._refresh_hud()
+        self._set_status("Find 5 differences! Click the right image.", TEXT_SUB)
+
+    def _on_player_click(self, src_x: int, src_y: int, disp_x: int, disp_y: int):
+        if self._game_over or self._engine is None:
+            return
+
+        idx = self._engine.check_click(src_x, src_y)
+
+        if idx >= 0:
+            # ✅ Correct!
+            self._score += 1
+            self._score_var.set(f"Score: {self._score}")
+            self._mark_found(idx, found=True)
+            self._refresh_hud()
+
+            if self._engine.all_found:
+                self._end_round_success()
+            else:
+                self._set_status(
+                    f"✓  Found one! {self._engine.num_remaining} remaining.", SUCCESS
+                )
+        else:
+            # ✗ Mistake
+            self._mistakes += 1
+            self._refresh_hud()
+            # Flash the mistake indicator
+            self._animate_mistake(disp_x, disp_y)
+
+            if self._mistakes >= MAX_MISTAKES:
+                self._end_round_fail()
+            else:
+                self._set_status(
+                    f"✗  Not quite.  {MAX_MISTAKES - self._mistakes} mistake(s) left.", DANGER
+                )
+
+    def _mark_found(self, idx: int, found: bool, reveal: bool = False):
+        """Draw a circle on BOTH panels for a difference region."""
+        region = self._engine.regions[idx] # type: ignore
+        cx, cy, r = self._orig_panel._region_centre_radius(region)
+        color_hex  = "#ff4444" if found else "#3399ff"
+
+        self._orig_panel.draw_marker(cx, cy, r, color_hex, tag=f"diff_{idx}")
+        self._mod_panel.draw_marker(cx, cy, r, color_hex, tag=f"diff_{idx}")
+
+    def _reveal_all(self):
+        if self._engine is None:
+            return
+        for i, flag in enumerate(self._engine.found_flags):
+            if not flag:
+                self._mark_found(i, found=False, reveal=True)
+
+        self._game_over = True
+        self._mod_panel.deactivate()
+        self._reveal_btn.config(state="disabled")
+        self._set_status(
+            f"Differences revealed. Found {self._engine.num_found}/{NUM_DIFFS}. Load a new image!",
+            ACCENT2
+        )
+
+    def _end_round_success(self):
+        self._game_over = True
+        self._mod_panel.deactivate()
+        self._reveal_btn.config(state="disabled")
+        self._set_status("🎉  All 5 found! Load another image to keep playing.", SUCCESS)
+        messagebox.showinfo(
+            "Well Done!",
+            f"You found all 5 differences with only {self._mistakes} mistake(s)!\n\n"
+            f"Cumulative score: {self._score}"
+        )
+
+    def _end_round_fail(self):
+        self._game_over = True
+        self._mod_panel.deactivate()
+        self._reveal_btn.config(state="disabled")
+
+        found = self._engine.num_found # type: ignore
+        self._set_status(
+            f"❌  3 mistakes reached. Found {found}/{NUM_DIFFS}. Load a new image.", DANGER
+        )
+        messagebox.showwarning(
+            "Too Many Mistakes",
+            f"You reached the maximum of {MAX_MISTAKES} mistakes.\n"
+            f"You found {found} out of {NUM_DIFFS} differences.\n\n"
+            "Load a new image to try again!"
+        )
+
+    # ── HUD helpers ───────────────────────────────────────────────────────────
+
+    def _refresh_hud(self):
+        if self._engine:
+            self._remaining_var.set(f"Remaining: {self._engine.num_remaining}")
+        self._mistakes_var.set(f"Mistakes: {self._mistakes} / {MAX_MISTAKES}")
+
+    def _set_status(self, msg: str, color: str = TEXT_SUB):
+        self._status_var.set(msg)
+        self._status_lbl.config(fg=color)
+
+    def _animate_mistake(self, cx: int, cy: int):
+        """Draw a fading X on the modified panel at the click point."""
+        size = 16
+        item1 = self._mod_panel._canvas.create_line(
+            cx - size, cy - size, cx + size, cy + size,
+            fill=DANGER, width=3, tags="mistake"
+        )
+        item2 = self._mod_panel._canvas.create_line(
+            cx + size, cy - size, cx - size, cy + size,
+            fill=DANGER, width=3, tags="mistake"
+        )
+        self._root.after(600, lambda: (
+            self._mod_panel._canvas.delete(item1),
+            self._mod_panel._canvas.delete(item2)
+        ))
+
+    # ── Entry point ───────────────────────────────────────────────────────────
+
+    def run(self):
+        self._root.mainloop()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Main
 # ──────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    print("This module is not meant to be run directly. Run main.py instead.")
+    app = GameApp()
+    app.run()
