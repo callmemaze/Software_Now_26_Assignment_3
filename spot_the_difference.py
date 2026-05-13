@@ -367,11 +367,103 @@ class GameApp:
         self._game_over: bool = False
 
         # ── Build UI ──────────────────────────────────────────────────────────
-        #self._build_ui()
+        self._build_ui()
 
     # ── UI Construction ───────────────────────────────────────────────────────
 
-    
+    def _build_ui(self):
+        # ─ Title bar ──────────────────────────────────────────────────────────
+        title_frame = tk.Frame(self._root, bg=BG_DARK)
+        title_frame.pack(fill="x", padx=16, pady=(16, 8))
+
+        tk.Label(
+            title_frame,
+            text="SPOT  THE  DIFFERENCE",
+            bg=BG_DARK, fg=ACCENT,
+            font=("Helvetica", 22, "bold")
+        ).pack(side="left")
+
+        # Score badge on the right
+        self._score_var = tk.StringVar(value="Score: 0")
+        tk.Label(
+            title_frame, textvariable=self._score_var,
+            bg=BG_DARK, fg=ACCENT2,
+            font=("Helvetica", 14, "bold")
+        ).pack(side="right", padx=8)
+
+        # ─ Image panels ───────────────────────────────────────────────────────
+        panels_frame = tk.Frame(self._root, bg=BG_DARK)
+        panels_frame.pack(padx=16, pady=4)
+
+        # Left: original (reference only)
+        self._orig_panel = ImagePanel(panels_frame, "📷  Original  —  Reference only")
+        self._orig_panel.pack(side="left", padx=(0, 8))
+
+        # Right: modified (interactive)
+        self._mod_panel = ModifiedPanel(panels_frame)
+        self._mod_panel.pack(side="left")
+
+        # ─ Status bar ─────────────────────────────────────────────────────────
+        status_frame = tk.Frame(self._root, bg=BG_MID, pady=10)
+        status_frame.pack(fill="x", padx=16, pady=4)
+
+        self._remaining_var = tk.StringVar(value="Remaining: —")
+        tk.Label(
+            status_frame, textvariable=self._remaining_var,
+            bg=BG_MID, fg=TEXT_MAIN,
+            font=("Helvetica", 13, "bold")
+        ).pack(side="left", padx=16)
+
+        self._mistakes_var = tk.StringVar(value="Mistakes: 0 / 3")
+        tk.Label(
+            status_frame, textvariable=self._mistakes_var,
+            bg=BG_MID, fg=DANGER,
+            font=("Helvetica", 13)
+        ).pack(side="left", padx=16)
+
+        self._status_var = tk.StringVar(value="Load an image to begin.")
+        self._status_lbl = tk.Label(
+            status_frame, textvariable=self._status_var,
+            bg=BG_MID, fg=TEXT_SUB,
+            font=("Helvetica", 11, "italic")
+        )
+        self._status_lbl.pack(side="right", padx=16)
+
+        # ─ Button row ─────────────────────────────────────────────────────────
+        btn_frame = tk.Frame(self._root, bg=BG_DARK)
+        btn_frame.pack(pady=12)
+
+        btn_style = dict(
+            font=("Helvetica", 12, "bold"),
+            relief="flat", cursor="hand2",
+            padx=20, pady=8, bd=0
+        )
+
+        self._load_btn = tk.Button(
+            btn_frame, text="📁  Load Image",
+            bg=ACCENT, fg="white",
+            activebackground="#c73050", activeforeground="white",
+            command=self._load_image, **btn_style # type: ignore
+        )
+        self._load_btn.pack(side="left", padx=8)
+
+        self._reveal_btn = tk.Button(
+            btn_frame, text="💡  Reveal All",
+            bg="#2a4a6a", fg=TEXT_SUB,
+            activebackground="#1d3a54", activeforeground=TEXT_MAIN,
+            command=self._reveal_all, state="disabled", **btn_style # type: ignore
+        )
+        self._reveal_btn.pack(side="left", padx=8)
+
+        # ─ Difference type legend (bottom) ────────────────────────────────────
+        legend = tk.Frame(self._root, bg=BG_DARK)
+        legend.pack(pady=(0, 14))
+        tk.Label(
+            legend,
+            text="Alterations: Colour Shift · Noise · Blur · Brightness Invert · Hue Rotate",
+            bg=BG_DARK, fg=TEXT_SUB, font=("Helvetica", 9)
+        ).pack()
+
 
     # ── Game flow ─────────────────────────────────────────────────────────────
 
