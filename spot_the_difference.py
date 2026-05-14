@@ -294,54 +294,6 @@ class ImagePanel:
 # ──────────────────────────────────────────────────────────────────────────────
 # ModifiedPanel — subclass with click-handling; the interactive right panel
 # ──────────────────────────────────────────────────────────────────────────────
-class ModifiedPanel(ImagePanel):
-    """
-    Inherits ImagePanel; overrides draw_marker to also flash an animation,
-    and adds a click-callback hook for the game to respond to player input.
-    """
-
-    def __init__(self, parent: tk.Widget):
-        super().__init__(parent, "🔍  Modified  —  Click here to find differences")
-        self._on_click_cb = None
-        self._canvas.bind("<Button-1>", self._handle_click)
-        self._active = False  # only respond to clicks when a game is running
-
-    def activate(self, callback):
-        self._active     = True
-        self._on_click_cb = callback
-
-    def deactivate(self):
-        self._active = False
-
-    def _handle_click(self, event: tk.Event):
-        if not self._active or self._on_click_cb is None:
-            return
-        src_x, src_y = self.display_to_src(event.x, event.y)
-        self._on_click_cb(src_x, src_y, event.x, event.y)
-
-    # Polymorphism: override to add a brief ring animation
-    def draw_marker(self, src_x: int, src_y: int, src_r: int, color_hex: str,
-                    tag: str = "marker"):
-        super().draw_marker(src_x, src_y, src_r, color_hex, tag)
-        # Animate an expanding ghost ring
-        dx, dy = self.src_to_display(src_x, src_y)
-        dr = int(src_r / ((self._scale_x + self._scale_y) / 2))
-        self._animate_ring(dx, dy, dr, color_hex, step=0)
-
-    def _animate_ring(self, cx, cy, base_r, color_hex, step):
-        if step > 6:
-            return
-        r       = base_r + step * 5
-        alpha_s = max(0, 1.0 - step / 7)
-        # Approximate alpha by brightening — hex manipulation
-        ring_id = self._canvas.create_oval(
-            cx - r, cy - r, cx + r, cy + r,
-            outline=color_hex, width=max(1, 3 - step), tags="ring"
-        )
-        self._canvas.after(60, lambda: (
-            self._canvas.delete(ring_id),
-            self._animate_ring(cx, cy, base_r, color_hex, step + 1)
-        ))
 
 
 # ──────────────────────────────────────────────────────────────────────────────
