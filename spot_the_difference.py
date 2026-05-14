@@ -343,52 +343,6 @@ class ModifiedPanel(ImagePanel):
             self._animate_ring(cx, cy, base_r, color_hex, step + 1)
         ))
 
-# ──────────────────────────────────────────────────────────────────────────────
-# GameApp — the conductor
-# ──────────────────────────────────────────────────────────────────────────────
-class GameApp:
-    """
-    Root application class.  Owns all game state and ties the UI together.
-    No image-processing logic lives here — that's DifferenceEngine's job.
-    """
-
-    def __init__(self):
-        # ── Window setup ──────────────────────────────────────────────────────
-        self._root = tk.Tk()
-        self._root.title("Spot the Difference")
-        self._root.configure(bg=BG_DARK)
-        self._root.resizable(False, False)
-
-        # ── Game state ────────────────────────────────────────────────────────
-        self._engine   : Optional[DifferenceEngine] = None
-        self._mistakes : int = 0
-        self._score    : int = 0   # cumulative found differences across all images
-        self._game_over: bool = False
-
-        # ── Build UI ──────────────────────────────────────────────────────────
-        self._build_ui()
-
-    # ── UI Construction ───────────────────────────────────────────────────────
-
-    def _build_ui(self):
-        # ─ Title bar ──────────────────────────────────────────────────────────
-        title_frame = tk.Frame(self._root, bg=BG_DARK)
-        title_frame.pack(fill="x", padx=16, pady=(16, 8))
-
-        tk.Label(
-            title_frame,
-            text="SPOT  THE  DIFFERENCE",
-            bg=BG_DARK, fg=ACCENT,
-            font=("Helvetica", 22, "bold")
-        ).pack(side="left")
-
-        # Score badge on the right
-        self._score_var = tk.StringVar(value="Score: 0")
-        tk.Label(
-            title_frame, textvariable=self._score_var,
-            bg=BG_DARK, fg=ACCENT2,
-            font=("Helvetica", 14, "bold")
-        ).pack(side="right", padx=8)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # GameApp — the conductor
