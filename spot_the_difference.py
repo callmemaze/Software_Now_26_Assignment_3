@@ -482,7 +482,26 @@ class GameApp:
         ).pack()
 
     # ── Game flow ─────────────────────────────────────────────────────────────
+    def _load_image(self):
+        path = filedialog.askopenfilename(
+            title="Choose an image",
+            filetypes=[("Images", "*.jpg *.jpeg *.png *.bmp *.tiff *.webp"),
+                       ("All files", ".")]
+        )
+        if not path:
+            return
 
+        bgr = cv2.imread(path)
+        if bgr is None:
+            messagebox.showerror("Error", "Could not read image. Try a different file.")
+            return
+
+        # Resize source to a sane maximum so differences are proportionate
+        MAX_SRC = (960, 720)
+        h, w = bgr.shape[:2]
+        if w > MAX_SRC[0] or h > MAX_SRC[1]:
+            scale = min(MAX_SRC[0] / w, MAX_SRC[1] / h)
+            bgr   = cv2.resize(bgr, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
     
         self._start_round(bgr)
 
