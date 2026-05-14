@@ -229,8 +229,10 @@ class ImagePanel:
 
         # Internal state
         self._photo_ref  = None  # keep a reference so GC doesn't collect it
-        self._scale_x    = 1.0   # source px / display px  (set when image loaded)
+        self._scale_x    = 1.0   # source px / fit px  (set when image loaded)
         self._scale_y    = 1.0
+        self._offset_x   = 0    # letterbox x offset within canvas
+        self._offset_y   = 0    # letterbox y offset within canvas
         self._src_w      = 1
         self._src_h      = 1
         self._markers    = []    # list of (cx, cy, r, colour) in display coords
@@ -243,19 +245,34 @@ class ImagePanel:
     # ── Image management ──────────────────────────────────────────────────────
 
     def show_image(self, bgr: np.ndarray):
-        """Display a BGR OpenCV image, scaling to fit DISPLAY_SIZE."""
+        """Display a BGR OpenCV image with correct aspect ratio (letterboxed)."""
         self._src_h, self._src_w = bgr.shape[:2]
-        self._scale_x = self._src_w / DISPLAY_SIZE[0]
-        self._scale_y = self._src_h / DISPLAY_SIZE[1]
+
+        # Compute scale to fit within DISPLAY_SIZE while preserving aspect ratio
+        scale = min(DISPLAY_SIZE[0] / self._src_w, DISPLAY_SIZE[1] / self._src_h)
+        fit_w = int(self._src_w * scale)
+        fit_h = int(self._src_h * scale)
+
+        # Store the actual scale factors (source px → fit px)
+        self._scale_x  = self._src_w / fit_w
+        self._scale_y  = self._src_h / fit_h
+        # Offset of image within the canvas (for centring)
+        self._offset_x = (DISPLAY_SIZE[0] - fit_w) // 2
+        self._offset_y = (DISPLAY_SIZE[1] - fit_h) // 2
 
         rgb   = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-        pil   = Image.fromarray(rgb).resize(DISPLAY_SIZE, Image.Resampling.LANCZOS)
+        pil   = Image.fromarray(rgb).resize((fit_w, fit_h), Image.Resampling.LANCZOS)
         photo = ImageTk.PhotoImage(pil)
 
         self._photo_ref = photo
         self._canvas.delete("all")
         self._markers.clear()
-        self._canvas.create_image(0, 0, anchor="nw", image=photo)
+        # Fill canvas with dark background so letterbox bars show cleanly
+        self._canvas.create_rectangle(
+            0, 0, DISPLAY_SIZE[0], DISPLAY_SIZE[1],
+            fill="#111122", outline=""
+        )
+        self._canvas.create_image(self._offset_x, self._offset_y, anchor="nw", image=photo)
 
     def clear(self):
         self._canvas.delete("all")
@@ -265,10 +282,10 @@ class ImagePanel:
     # ── Coordinate helpers ─────────────────────────────────────────────────────
 
     def src_to_display(self, sx: int, sy: int) -> tuple[int, int]:
-        return int(sx / self._scale_x), int(sy / self._scale_y)
+        return int(sx / self._scale_x) + self._offset_x, int(sy / self._scale_y) + self._offset_y
 
     def display_to_src(self, dx: int, dy: int) -> tuple[int, int]:
-        return int(dx * self._scale_x), int(dy * self._scale_y)
+        return int((dx - self._offset_x) * self._scale_x), int((dy - self._offset_y) * self._scale_y)
 
     # ── Marker drawing (polymorphic) ──────────────────────────────────────────
 
@@ -380,7 +397,7 @@ class GameApp:
             title_frame,
             text="SPOT  THE  DIFFERENCE",
             bg=BG_DARK, fg=ACCENT,
-            font=("Helvetica", 22, "bold")
+            font=("Helvetica", 22, "bold") # type: ignore
         ).pack(side="left")
 
         # Score badge on the right
@@ -464,30 +481,9 @@ class GameApp:
             bg=BG_DARK, fg=TEXT_SUB, font=("Helvetica", 9)
         ).pack()
 
-
     # ── Game flow ─────────────────────────────────────────────────────────────
 
-    def _load_image(self):
-        path = filedialog.askopenfilename(
-            title="Choose an image",
-            filetypes=[("Images", "*.jpg *.jpeg *.png *.bmp *.tiff *.webp"),
-                       ("All files", "*.*")]
-        )
-        if not path:
-            return
-
-        bgr = cv2.imread(path)
-        if bgr is None:
-            messagebox.showerror("Error", "Could not read image. Try a different file.")
-            return
-
-        # Resize source to a sane maximum so differences are proportionate
-        MAX_SRC = (960, 720)
-        h, w = bgr.shape[:2]
-        if w > MAX_SRC[0] or h > MAX_SRC[1]:
-            scale = min(MAX_SRC[0] / w, MAX_SRC[1] / h)
-            bgr   = cv2.resize(bgr, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
-
+    
         self._start_round(bgr)
 
     def _start_round(self, bgr: np.ndarray):
@@ -554,11 +550,14 @@ class GameApp:
             return
         for i, flag in enumerate(self._engine.found_flags):
             if not flag:
+                # Mark in the engine so num_remaining reaches 0
+                self._engine._found[i] = True
                 self._mark_found(i, found=False, reveal=True)
 
         self._game_over = True
         self._mod_panel.deactivate()
         self._reveal_btn.config(state="disabled")
+        self._refresh_hud()   # counter now shows "Remaining: 0"
         self._set_status(
             f"Differences revealed. Found {self._engine.num_found}/{NUM_DIFFS}. Load a new image!",
             ACCENT2
@@ -578,17 +577,17 @@ class GameApp:
     def _end_round_fail(self):
         self._game_over = True
         self._mod_panel.deactivate()
-        self._reveal_btn.config(state="disabled")
+        # Keep reveal button active — player can reveal to see missed differences
 
         found = self._engine.num_found # type: ignore
         self._set_status(
-            f"❌  3 mistakes reached. Found {found}/{NUM_DIFFS}. Load a new image.", DANGER
+            f"❌  3 mistakes reached. Found {found}/{NUM_DIFFS}. Reveal or load a new image.", DANGER
         )
         messagebox.showwarning(
             "Too Many Mistakes",
             f"You reached the maximum of {MAX_MISTAKES} mistakes.\n"
             f"You found {found} out of {NUM_DIFFS} differences.\n\n"
-            "Load a new image to try again!"
+            "Press 'Reveal All' to see missed differences, or load a new image!"
         )
 
     # ── HUD helpers ───────────────────────────────────────────────────────────
